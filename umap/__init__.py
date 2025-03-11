@@ -28,9 +28,6 @@ except ImportError:
                 "umap.parametric_umap requires Tensorflow >= 2.0"
             ) from None
 
-
-from .aligned_umap import AlignedUMAP
-
 # Workaround: https://github.com/numba/numba/issues/3341
 import numba
 
