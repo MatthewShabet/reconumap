@@ -18,12 +18,7 @@ import numba
 
 import umap.sparse as sparse
 
-from umap.utils import (
-    submatrix,
-    ts,
-    csr_unique,
-    fast_knn_indices,
-)
+from umap.utils import ts
 from umap.layouts import optimize_layout_euclidean
 
 locale.setlocale(locale.LC_NUMERIC, "C")
@@ -275,7 +270,6 @@ def compute_membership_strengths(
 def fuzzy_simplicial_set(
     X,
     n_neighbors,
-    random_state,
     knn_indices=None,
     knn_dists=None,
     set_op_mix_ratio=1.0,
@@ -301,10 +295,7 @@ def fuzzy_simplicial_set(
         miss finer detail, while smaller values will focus on fine manifold
         structure to the detriment of the larger picture.
 
-    random_state: numpy RandomState or equivalent
-        A state capable being used as a numpy random state.
-
-     knn_indices: array of shape (n_samples, n_neighbors) (optional)
+    knn_indices: array of shape (n_samples, n_neighbors) (optional)
         If the k-nearest neighbors of each point has already been calculated
         you can pass them in here to save computation time. This should be
         an array with the indices of the k-nearest neighbors as a row for
@@ -398,18 +389,7 @@ def make_epochs_per_sample(weights, n_epochs):
     return result
 
 
-# scale coords so that the largest coordinate is max_coords, then add normal-distributed
-# noise with standard deviation noise
-def noisy_scale_coords(coords, random_state, max_coord=10.0, noise=0.0001):
-    expansion = max_coord / np.abs(coords).max()
-    coords = (coords * expansion).astype(np.float32)
-    return coords + random_state.normal(scale=noise, size=coords.shape).astype(
-        np.float32
-    )
-
-
 def simplicial_set_embedding(
-    data,
     graph,
     n_components,
     initial_alpha,
@@ -420,8 +400,6 @@ def simplicial_set_embedding(
     n_epochs,
     init,
     random_state,
-    euclidean_output=True,
-    parallel=False,
     verbose=False,
     tqdm_kwds=None,
 ):
@@ -432,9 +410,6 @@ def simplicial_set_embedding(
 
     Parameters
     ----------
-    data: array of shape (n_samples, n_features)
-        The source data to be embedded by UMAP.
-
     graph: sparse matrix
         The 1-skeleton of the high dimensional fuzzy simplicial set as
         represented by a graph for which we require a sparse matrix for the
@@ -480,14 +455,6 @@ def simplicial_set_embedding(
 
     random_state: numpy RandomState or equivalent
         A state capable being used as a numpy random state.
-
-    euclidean_output: bool
-        Whether to use the faster code specialised for euclidean output metrics
-
-    parallel: bool (optional, default False)
-        Whether to run the computation using numba parallel.
-        Running in parallel is non-deterministic, and is not used
-        if a random seed has been set, to ensure reproducibility.
 
     verbose: bool (optional, default False)
         Whether to report information on the current progress of the algorithm.
@@ -552,7 +519,6 @@ def simplicial_set_embedding(
         / (np.max(embedding, 0) - np.min(embedding, 0))
     ).astype(np.float32, order="C")
 
-    assert euclidean_output is True
     embedding = optimize_layout_euclidean(
         embedding,
         embedding,
@@ -567,7 +533,6 @@ def simplicial_set_embedding(
         gamma,
         initial_alpha,
         negative_sample_rate,
-        parallel=parallel,
         verbose=verbose,
         tqdm_kwds=tqdm_kwds,
         move_other=True,
@@ -606,6 +571,9 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
 
     Parameters
     ----------
+    init: string
+        A numpy array of initial embedding positions
+    
     n_neighbors: float (optional, default 15)
         The size of local neighborhood (in terms of number of neighboring
         sample points) used for manifold approximation. Larger values
@@ -626,20 +594,6 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
 
     learning_rate: float (optional, default 1.0)
         The initial learning rate for the embedding optimization.
-
-    init: string (optional, default 'spectral')
-        How to initialize the low dimensional embedding. Options are:
-
-            * 'spectral': use a spectral embedding of the fuzzy 1-skeleton
-            * 'random': assign initial embedding positions at random.
-            * 'pca': use the first n_components from PCA applied to the
-                input data.
-            * 'tswspectral': use a spectral embedding of the fuzzy
-                1-skeleton, using a truncated singular value decomposition to
-                "warm" up the eigensolver. This is intended as an alternative
-                to the 'spectral' method, if that takes an  excessively long
-                time to complete initialization (or fails to complete).
-            * A numpy array of initial embedding positions.
 
     min_dist: float (optional, default 0.1)
         The effective minimum distance between embedded points. Smaller values
@@ -688,25 +642,11 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
         values are set automatically as determined by ``min_dist`` and
         ``spread``.
 
-    random_state: int, RandomState instance or None, optional (default: None)
-        If int, random_state is the seed used by the random number generator;
-        If RandomState instance, random_state is the random number generator;
-        If None, the random number generator is the RandomState instance used
-        by `np.random`.
-
     verbose: bool (optional, default False)
         Controls verbosity of logging.
 
     tqdm_kwds: dict (optional, defaul None)
         Key word arguments to be used by the tqdm progress bar.
-
-    unique: bool (optional, default False)
-        Controls if the rows of your data should be uniqued before being
-        embedded.  If you have more duplicates than you have ``n_neighbors``
-        you can have the identical data points lying in different regions of
-        your space.  It also violates the definition of a metric.
-        For to map from internal structures back to your data use the variable
-        _unique_inverse_.
 
     disconnection_distance: float (optional, default np.inf or maximal value for bounded distances)
         Disconnect any vertices of distance greater than or equal to disconnection_distance when approximating the
@@ -719,11 +659,11 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
 
     def __init__(
         self,
+        init,
         n_neighbors=15,
         n_components=2,
         n_epochs=None,
         learning_rate=1.0,
-        init="spectral",
         min_dist=0.1,
         spread=1.0,
         n_jobs=-1,
@@ -733,11 +673,8 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
         negative_sample_rate=5,
         a=None,
         b=None,
-        random_state=None,
-        force_approximation_algorithm=False,
         verbose=False,
         tqdm_kwds=None,
-        unique=False,
         disconnection_distance=2, # MKS
     ):
         self.n_neighbors = n_neighbors
@@ -752,11 +689,8 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
         self.set_op_mix_ratio = set_op_mix_ratio
         self.local_connectivity = local_connectivity
         self.negative_sample_rate = negative_sample_rate
-        self.random_state = random_state
-        self.force_approximation_algorithm = force_approximation_algorithm
         self.verbose = verbose
         self.tqdm_kwds = tqdm_kwds
-        self.unique = unique
 
         self.disconnection_distance = disconnection_distance
 
@@ -774,18 +708,8 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
             raise ValueError("min_dist must be less than or equal to spread")
         if self.min_dist < 0.0:
             raise ValueError("min_dist cannot be negative")
-        if not isinstance(self.init, str) and not isinstance(self.init, np.ndarray):
-            raise ValueError("init must be a string or ndarray")
-        if isinstance(self.init, str) and self.init not in (
-            "pca",
-            "spectral",
-            "random",
-            "tswspectral",
-        ):
-            raise ValueError(
-                'string init values must be one of: "pca", "tswspectral",'
-                ' "spectral" or "random"'
-            )
+        if not isinstance(self.init, np.ndarray):
+            raise ValueError("init must be a ndarray")
         if (
             isinstance(self.init, np.ndarray)
             and self.init.shape[1] != self.n_components
@@ -837,19 +761,9 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
             self._sparse_data = True
         else:
             self._sparse_data = False
-        # set input distance metric & inverse_transform distance metric
-        if self.unique:
-            raise ValueError("unique is poorly defined on a precomputed metric")
-        warn("using precomputed metric; inverse_transform will be unavailable")
-        self._inverse_distance_func = None
 
         if self.n_jobs < -1 or self.n_jobs == 0:
             raise ValueError("n_jobs must be a postive integer, or -1 (for all cores)")
-        if self.n_jobs != 1 and self.random_state is not None:
-            self.n_jobs = 1
-            warn(
-                f"n_jobs value {self.n_jobs} overridden to 1 by setting random_state. Use no seed for parallelism."
-            )
 
         # This will be used to prune all edges of greater than a fixed value from our knn graph.
         # We have preset defaults described in DISCONNECTION_DISTANCES for our bounded measures.
@@ -878,48 +792,6 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
             bar_f = "{desc}: {percentage:3.0f}%| {bar} {n_fmt}/{total_fmt} [{elapsed}]"
             self.tqdm_kwds["bar_format"] = bar_f
 
-        if hasattr(self, "knn_dists") and self.knn_dists is not None:
-            if self.unique:
-                raise ValueError(
-                    "unique is not currently available for " "precomputed_knn."
-                )
-            if not isinstance(self.knn_indices, np.ndarray):
-                raise ValueError("precomputed_knn[0] must be ndarray object.")
-            if not isinstance(self.knn_dists, np.ndarray):
-                raise ValueError("precomputed_knn[1] must be ndarray object.")
-            if self.knn_dists.shape != self.knn_indices.shape:
-                raise ValueError(
-                    "precomputed_knn[0] and precomputed_knn[1]"
-                    " must be numpy arrays of the same size."
-                )
-            if self.knn_dists.shape[1] < self.n_neighbors:
-                warn(
-                    "precomputed_knn has a lower number of neighbors than "
-                    "n_neighbors parameter. precomputed_knn will be ignored"
-                    " and the k-nn will be computed normally."
-                )
-                self.knn_indices = None
-                self.knn_dists = None
-            elif self.knn_dists.shape[0] != self._raw_data.shape[0]:
-                warn(
-                    "precomputed_knn has a different number of samples than the"
-                    " data you are fitting. precomputed_knn will be ignored and"
-                    "the k-nn will be computed normally."
-                )
-                self.knn_indices = None
-                self.knn_dists = None
-            elif (
-                self.knn_dists.shape[0] < 4096
-                and not self.force_approximation_algorithm
-            ):
-                # force_approximation_algorithm is irrelevant for pre-computed knn
-                # always set it to True which keeps downstream code paths working
-                self.force_approximation_algorithm = True
-            elif self.knn_dists.shape[1] > self.n_neighbors:
-                # if k for precomputed_knn larger than n_neighbors we simply prune it
-                self.knn_indices = self.knn_indices[:, : self.n_neighbors]
-                self.knn_dists = self.knn_dists[:, : self.n_neighbors]
-    
     def fit(self, X, ensure_all_finite=True, **kwargs):
         """Fit X into an embedded space.
 
@@ -933,9 +805,6 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
                                    - False: accepts np.inf, np.nan, pd.NA in array.
                                    - 'allow-nan': accepts only np.nan and pd.NA values in array.
                                      Values cannot be infinite.
-
-        **kwargs : optional
-            Any additional keyword arguments are passed to _fit_embed_data.
         """
         X = check_array(
             X,
@@ -953,66 +822,24 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
             self._a = self.a
             self._b = self.b
 
-        if isinstance(self.init, np.ndarray):
-            init = check_array(
-                self.init,
-                dtype=np.float32,
-                accept_sparse=False,
-                ensure_all_finite=ensure_all_finite,
-            )
-        else:
-            init = self.init
+        assert isinstance(self.init, np.ndarray)
+        init = check_array(
+            self.init,
+            dtype=np.float32,
+            accept_sparse=False,
+            ensure_all_finite=ensure_all_finite,
+        )
 
         self._initial_alpha = self.learning_rate
 
-        self.knn_indices = None
-        self.knn_dists = None
-
         self._validate_parameters()
-
-        if self.verbose:
-            print(str(self))
 
         self._original_n_threads = numba.get_num_threads()
         if self.n_jobs > 0 and self.n_jobs is not None:
             numba.set_num_threads(self.n_jobs)
 
-        # Check if we should unique the data
-        # We've already ensured that we aren't in the precomputed case
-        if self.unique:
-            # check if the matrix is dense
-            if self._sparse_data:
-                # Call a sparse unique function
-                index, inverse, counts = csr_unique(X)
-            else:
-                index, inverse, counts = np.unique(
-                    X,
-                    return_index=True,
-                    return_inverse=True,
-                    return_counts=True,
-                    axis=0,
-                )[1:4]
-            if self.verbose:
-                print(
-                    "Unique=True -> Number of data points reduced from ",
-                    X.shape[0],
-                    " to ",
-                    X[index].shape[0],
-                )
-                most_common = np.argmax(counts)
-                print(
-                    "Most common duplicate is",
-                    index[most_common],
-                    " with a count of ",
-                    counts[most_common],
-                )
-            # We'll expose an inverse map when unique=True for users to map from our internal structures to their data
-            self._unique_inverse_ = inverse
-        # If we aren't asking for unique use the full index.
-        # This will save special cases later.
-        else:
-            index = list(range(X.shape[0]))
-            inverse = list(range(X.shape[0]))
+        index = list(range(X.shape[0]))
+        inverse = list(range(X.shape[0]))
 
         # Error check n_neighbors based on data size
         if X[index].shape[0] <= self.n_neighbors:
@@ -1035,7 +862,7 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
         if self._sparse_data and not X.has_sorted_indices:
             X.sort_indices()
 
-        random_state = check_random_state(self.random_state)
+        random_state = check_random_state(None)
 
         if self.verbose:
             print(ts(), "Construct fuzzy simplicial set")
@@ -1045,30 +872,29 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
         # nearest neighbors. To make this easier, we expect matrices that are
         # symmetrical (so we can find neighbors by looking at rows in isolation,
         # rather than also having to consider that sample's column too).
-        # print("Computing KNNs for sparse precomputed distances...")
+        print("Computing KNNs for sparse precomputed distances...")
         if sparse_tril(X).getnnz() != sparse_triu(X).getnnz():
             raise ValueError(
                 "Sparse precomputed distance matrices should be symmetrical!"
             )
         if not np.all(X.diagonal() == 0):
             raise ValueError("Non-zero distances from samples to themselves!")
-        if self.knn_dists is None:
-            self._knn_indices = np.zeros((X.shape[0], self.n_neighbors), dtype=int)
-            self._knn_dists = np.zeros(self._knn_indices.shape, dtype=float)
-            for row_id in range(X.shape[0]):
-                # Find KNNs row-by-row
-                row_data = X[row_id].data
-                row_indices = X[row_id].indices
-                if len(row_data) < self._n_neighbors:
-                    raise ValueError(
-                        "Some rows contain fewer than n_neighbors distances!"
-                    )
-                row_nn_data_indices = np.argsort(row_data)[: self._n_neighbors]
-                self._knn_indices[row_id] = row_indices[row_nn_data_indices]
-                self._knn_dists[row_id] = row_data[row_nn_data_indices]
-        else:
-            self._knn_indices = self.knn_indices
-            self._knn_dists = self.knn_dists
+        
+        self._knn_indices = np.zeros((X.shape[0], self.n_neighbors), dtype=int)
+        self._knn_dists = np.zeros(self._knn_indices.shape, dtype=float)
+        for row_id in range(X.shape[0]):
+            # Find KNNs row-by-row
+            row_data = X[row_id].data
+            row_indices = X[row_id].indices
+            if len(row_data) < self._n_neighbors:
+                raise ValueError(
+                    "Some rows contain fewer than n_neighbors distances!"
+                )
+            row_nn_data_indices = np.argsort(row_data)[: self._n_neighbors]
+            self._knn_indices[row_id] = row_indices[row_nn_data_indices]
+            self._knn_dists[row_id] = row_data[row_nn_data_indices]
+
+        
         # Disconnect any vertices farther apart than _disconnection_distance
         disconnected_index = self._knn_dists >= self._disconnection_distance
         self._knn_indices[disconnected_index] = -1
@@ -1083,7 +909,6 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
         ) = fuzzy_simplicial_set(
             X[index],
             self.n_neighbors,
-            random_state,
             self._knn_indices,
             self._knn_dists,
             self.set_op_mix_ratio,
@@ -1091,6 +916,7 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
             True,
             self.verbose,
         )
+        
         # Report the number of vertices with degree 0 in our our umap.graph_
         # This ensures that they were properly disconnected.
         vertices_disconnected = np.sum(
@@ -1104,22 +930,25 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
             verbose=self.verbose,
         )
 
-        # Currently not checking if any duplicate points have differing labels
-        # Might be worth throwing a warning...
-        self._supervised = False
-
         if self.verbose:
             print(ts(), "Construct embedding")
 
         epochs = (
             self.n_epochs_list if self.n_epochs_list is not None else self.n_epochs
         )
-        self.embedding_, aux_data = self._fit_embed_data(
-            self._raw_data[index],
+        self.embedding_, aux_data = simplicial_set_embedding(
+            self.graph_,
+            self.n_components,
+            self._initial_alpha,
+            self._a,
+            self._b,
+            self.repulsion_strength,
+            self.negative_sample_rate,
             epochs,
             init,
-            random_state,  # JH why raw data?
-            **kwargs,
+            random_state,
+            self.verbose,
+            tqdm_kwds=self.tqdm_kwds,
         )
 
         if self.n_epochs_list is not None:
@@ -1137,7 +966,6 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
         # Assign any points that are fully disconnected from our manifold(s) to have embedding
         # coordinates of np.nan.  These will be filtered by our plotting functions automatically.
         # They also prevent users from being deceived a distance query to one of these points.
-        # Might be worth moving this into simplicial_set_embedding or _fit_embed_data
         disconnected_vertices = np.array(self.graph_.sum(axis=1)).flatten() == 0
         if len(disconnected_vertices) > 0:
             self.embedding_[disconnected_vertices] = np.full(
@@ -1146,80 +974,9 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
 
         self.embedding_ = self.embedding_[inverse]
 
-
         if self.verbose:
             print(ts() + " Finished embedding")
 
         numba.set_num_threads(self._original_n_threads)
-        self._n_features_out = self.embedding_.shape[1]
 
-        return self
-
-    def _fit_embed_data(self, X, n_epochs, init, random_state, **kwargs):
-        """A method wrapper for simplicial_set_embedding that can be
-        replaced by subclasses. Arbitrary keyword arguments can be passed
-        through .fit() and .fit_transform().
-        """
-        return simplicial_set_embedding(
-            X,
-            self.graph_,
-            self.n_components,
-            self._initial_alpha,
-            self._a,
-            self._b,
-            self.repulsion_strength,
-            self.negative_sample_rate,
-            n_epochs,
-            init,
-            random_state,
-            True,
-            self.random_state is None,
-            self.verbose,
-            tqdm_kwds=self.tqdm_kwds,
-        )
-
-    def fit_transform(self, X, ensure_all_finite=True, **kwargs):
-        """Fit X into an embedded space and return that transformed
-        output.
-
-        Parameters
-        ----------
-        X : array, shape (n_samples, n_features) or (n_samples, n_samples)
-            If the metric is 'precomputed' X must be a square distance
-            matrix. Otherwise it contains a sample per row.
-
-        ensure_all_finite : Whether to raise an error on np.inf, np.nan, pd.NA in array.
-            The possibilities are: - True: Force all values of array to be finite.
-                                   - False: accepts np.inf, np.nan, pd.NA in array.
-                                   - 'allow-nan': accepts only np.nan and pd.NA values in array.
-                                     Values cannot be infinite.
-
-        **kwargs : Any additional keyword arguments are passed to _fit_embed_data.
-
-        Returns
-        -------
-        X_new : array, shape (n_samples, n_components)
-            Embedding of the training data in low-dimensional space.
-        """
-        self.fit(X, ensure_all_finite, **kwargs)
         return self.embedding_
-
-
-    def __repr__(self):
-        from sklearn.utils._pprint import _EstimatorPrettyPrinter
-        import re
-
-        pp = _EstimatorPrettyPrinter(
-            compact=True,
-            indent=1,
-            indent_at_name=True,
-            n_max_elements_to_show=50,
-        )
-        pp._changed_only = True
-        repr_ = pp.pformat(self)
-        repr_ = re.sub("tqdm_kwds={.*},", "", repr_, flags=re.S)
-        # remove empty lines
-        repr_ = re.sub("\n *\n", "\n", repr_, flags=re.S)
-        # remove extra whitespaces after a comma
-        repr_ = re.sub(", +", ", ", repr_)
-        return repr_

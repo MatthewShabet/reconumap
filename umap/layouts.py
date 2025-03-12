@@ -137,20 +137,9 @@ def _optimize_layout_euclidean_single_epoch(
             )
 
 
-_nb_optimize_layout_euclidean_single_epoch = numba.njit(
-    _optimize_layout_euclidean_single_epoch, fastmath=True, parallel=False
-)
-
 _nb_optimize_layout_euclidean_single_epoch_parallel = numba.njit(
     _optimize_layout_euclidean_single_epoch, fastmath=True, parallel=True
 )
-
-
-def _get_optimize_layout_euclidean_single_epoch_fn(parallel: bool = False):
-    if parallel:
-        return _nb_optimize_layout_euclidean_single_epoch_parallel
-    else:
-        return _nb_optimize_layout_euclidean_single_epoch
 
 
 def optimize_layout_euclidean(
@@ -167,7 +156,6 @@ def optimize_layout_euclidean(
     gamma=1.0,
     initial_alpha=1.0,
     negative_sample_rate=5.0,
-    parallel=False,
     verbose=False,
     tqdm_kwds=None,
     move_other=False,
@@ -213,10 +201,6 @@ def optimize_layout_euclidean(
         Initial learning rate for the SGD.
     negative_sample_rate: int (optional, default 5)
         Number of negative samples to use per positive sample.
-    parallel: bool (optional, default False)
-        Whether to run the computation using numba parallel.
-        Running in parallel is non-deterministic, and is not used
-        if a random seed has been set, to ensure reproducibility.
     verbose: bool (optional, default False)
         Whether to report information on the current progress of the algorithm.
     tqdm_kwds: dict (optional, default None)
@@ -238,7 +222,7 @@ def optimize_layout_euclidean(
 
     # Fix for calling UMAP many times for small datasets, otherwise we spend here
     # a lot of time in compilation step (first call to numba function)
-    optimize_fn = _get_optimize_layout_euclidean_single_epoch_fn(parallel)
+    optimize_fn = _nb_optimize_layout_euclidean_single_epoch_parallel
 
     if tqdm_kwds is None:
         tqdm_kwds = {}
