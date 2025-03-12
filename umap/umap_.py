@@ -16,10 +16,11 @@ import scipy.sparse
 from scipy.sparse import tril as sparse_tril, triu as sparse_triu
 import numba
 
-import umap.sparse as sparse
-
-from umap.utils import ts
 from umap.layouts import optimize_layout_euclidean
+
+# Generates a timestamp for use in logging messages when verbose=True
+def ts():
+    return time.ctime(time.time())
 
 locale.setlocale(locale.LC_NUMERIC, "C")
 

@@ -1,25 +1,11 @@
-import platform
 from setuptools import setup
-
-
-def readme():
-    try:
-        with open("README.rst", encoding="UTF-8") as readme_file:
-            return readme_file.read()
-    except TypeError:
-        # Python 2.7 doesn't support encoding argument in builtin open
-        import io
-
-        with io.open("README.rst", encoding="UTF-8") as readme_file:
-            return readme_file.read()
-
 
 configuration = {
     "name": "umap-learn",
     "version": "0.5.8",
     "description": "Uniform Manifold Approximation and Projection",
-    "long_description": readme(),
-    "long_description_content_type": "text/x-rst",
+    "long_description": "A minimal fork of UMAP designed for reconstructing large pucks",
+    "long_description_content_type": "text/plain",
     "classifiers": [
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Science/Research",
