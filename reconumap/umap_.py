@@ -16,7 +16,7 @@ import scipy.sparse
 from scipy.sparse import tril as sparse_tril, triu as sparse_triu
 import numba
 
-from umap.layouts import optimize_layout_euclidean
+from .layouts import optimize_layout_euclidean
 
 # Generates a timestamp for use in logging messages when verbose=True
 def ts():
