@@ -7,6 +7,6 @@ import numba
 from importlib.metadata import version, PackageNotFoundError
 
 try:
-    __version__ = version("umap-learn")
+    __version__ = version("reconumap-learn")
 except PackageNotFoundError:
     __version__ = "0.5-dev"

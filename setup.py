@@ -1,7 +1,7 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 
 configuration = {
-    "name": "umap-learn",
+    "name": "reconumap-learn",
     "version": "0.5.8",
     "description": "Uniform Manifold Approximation and Projection",
     "long_description": "A minimal fork of UMAP designed for reconstructing large pucks",
@@ -29,7 +29,7 @@ configuration = {
     "maintainer": "Leland McInnes",
     "maintainer_email": "leland.mcinnes@gmail.com",
     "license": "BSD",
-    "packages": ["umap"],
+    "packages": find_packages(),
     "install_requires": [
         "numpy >= 1.23",
         "scipy >= 1.3.1",
@@ -50,13 +50,10 @@ configuration = {
             "scikit-image",
             "dask",
         ],
-        "parametric_umap": ["tensorflow >= 2.1"],
         "tbb": ["tbb >= 2019.0"],
     },
     "ext_modules": [],
     "cmdclass": {},
-    "test_suite": "pytest",
-    "tests_require": ["pytest"],
     "data_files": (),
     "zip_safe": False,
 }
