@@ -7,7 +7,7 @@ import time
 
 from scipy.optimize import curve_fit
 from sklearn.base import BaseEstimator, ClassNamePrefixFeaturesOutMixin
-from sklearn.utils import check_array, check_random_state
+from sklearn.utils import check_array
 from sklearn.preprocessing import normalize
 from sklearn.neighbors import KDTree
 
@@ -18,51 +18,12 @@ import numba
 
 from .layouts import optimize_layout_euclidean
 
-# Generates a timestamp for use in logging messages when verbose=True
-def ts():
-    return time.ctime(time.time())
-
 locale.setlocale(locale.LC_NUMERIC, "C")
 
-INT32_MIN = np.iinfo(np.int32).min + 1
-INT32_MAX = np.iinfo(np.int32).max - 1
 
 SMOOTH_K_TOLERANCE = 1e-5
 MIN_K_DIST_SCALE = 1e-3
 NPY_INFINITY = np.inf
-
-def raise_disconnected_warning(
-    edges_removed,
-    vertices_disconnected,
-    disconnection_distance,
-    total_rows,
-    threshold=0.1,
-    verbose=False,
-):
-    """A simple wrapper function to avoid large amounts of code repetition."""
-    if verbose & (vertices_disconnected == 0) & (edges_removed > 0):
-        print(
-            f"Disconnection_distance = {disconnection_distance} has removed {edges_removed} edges.  "
-            f"This is not a problem as no vertices were disconnected."
-        )
-    elif (vertices_disconnected > 0) & (
-        vertices_disconnected <= threshold * total_rows
-    ):
-        warn(
-            f"A few of your vertices were disconnected from the manifold.  This shouldn't cause problems.\n"
-            f"Disconnection_distance = {disconnection_distance} has removed {edges_removed} edges.\n"
-            f"It has only fully disconnected {vertices_disconnected} vertices.\n"
-            f"Use umap.utils.disconnected_vertices() to identify them.",
-        )
-    elif vertices_disconnected > threshold * total_rows:
-        warn(
-            f"A large number of your vertices were disconnected from the manifold.\n"
-            f"Disconnection_distance = {disconnection_distance} has removed {edges_removed} edges.\n"
-            f"It has fully disconnected {vertices_disconnected} vertices.\n"
-            f"You might consider using find_disconnected_points() to find and remove these points from your data.\n"
-            f"Use umap.utils.disconnected_vertices() to identify them.",
-        )
-
 
 @numba.njit(
     locals={
@@ -276,7 +237,6 @@ def fuzzy_simplicial_set(
     set_op_mix_ratio=1.0,
     local_connectivity=1.0,
     apply_set_operations=True,
-    verbose=False,
 ):
     """Given a set of data X, a neighborhood size, and a measure of distance
     compute the fuzzy simplicial set (here represented as a fuzzy graph in
@@ -323,9 +283,6 @@ def fuzzy_simplicial_set(
         locally. In practice this should be not more than the local intrinsic
         dimension of the manifold.
 
-    verbose: bool (optional, default False)
-        Whether to report information on the current progress of the algorithm.
-
     Returns
     -------
     fuzzy_simplicial_set: coo_matrix
@@ -365,7 +322,7 @@ def fuzzy_simplicial_set(
 
     result.eliminate_zeros()
 
-    return result, sigmas, rhos, None
+    return result
 
 
 def make_epochs_per_sample(weights, n_epochs):
@@ -392,7 +349,6 @@ def make_epochs_per_sample(weights, n_epochs):
 
 def simplicial_set_embedding(
     graph,
-    n_components,
     initial_alpha,
     a,
     b,
@@ -400,8 +356,6 @@ def simplicial_set_embedding(
     negative_sample_rate,
     n_epochs,
     init,
-    random_state,
-    verbose=False,
     tqdm_kwds=None,
 ):
     """Perform a fuzzy simplicial set embedding, using a specified
@@ -415,9 +369,6 @@ def simplicial_set_embedding(
         The 1-skeleton of the high dimensional fuzzy simplicial set as
         represented by a graph for which we require a sparse matrix for the
         (weighted) adjacency matrix.
-
-    n_components: int
-        The dimensionality of the euclidean space into which to embed the data.
 
     initial_alpha: float
         Initial learning rate for the SGD.
@@ -440,11 +391,7 @@ def simplicial_set_embedding(
     n_epochs: int (optional, default 0), or list of int
         The number of training epochs to be used in optimizing the
         low dimensional embedding. Larger values result in more accurate
-        embeddings. If 0 is specified a value will be selected based on
-        the size of the input dataset (200 for large datasets, 500 for small).
-        If a list of int is specified, then the intermediate embeddings at the
-        different epochs specified in that list are returned in
-        ``aux_data["embedding_list"]``.
+        embeddings.
 
     init: string
         How to initialize the low dimensional embedding. Options are:
@@ -453,12 +400,6 @@ def simplicial_set_embedding(
             * 'random': assign initial embedding positions at random.
             * 'pca': use the first n_components from PCA applied to the input data.
             * A numpy array of initial embedding positions.
-
-    random_state: numpy RandomState or equivalent
-        A state capable being used as a numpy random state.
-
-    verbose: bool (optional, default False)
-        Whether to report information on the current progress of the algorithm.
 
     tqdm_kwds: dict
         Key word arguments to be used by the tqdm progress bar.
@@ -473,23 +414,10 @@ def simplicial_set_embedding(
     graph.sum_duplicates()
     n_vertices = graph.shape[1]
 
-    # For smaller datasets we can use more epochs
-    if graph.shape[0] <= 10000:
-        default_epochs = 500
-    else:
-        default_epochs = 200
-
-    if n_epochs is None:
-        n_epochs = default_epochs
-
     # If n_epoch is a list, get the maximum epoch to reach
-    n_epochs_max = max(n_epochs) if isinstance(n_epochs, list) else n_epochs
-
-    if n_epochs_max > 10:
-        graph.data[graph.data < (graph.data.max() / float(n_epochs_max))] = 0.0
-    else:
-        graph.data[graph.data < (graph.data.max() / float(default_epochs))] = 0.0
-
+    assert n_epochs > 10
+    graph.data[graph.data < (graph.data.max() / float(n_epochs))] = 0.0
+    
     graph.eliminate_zeros()
 
     init_data = np.array(init)
@@ -498,21 +426,17 @@ def simplicial_set_embedding(
             tree = KDTree(init_data)
             dist, ind = tree.query(init_data, k=2)
             nndist = np.mean(dist[:, 1])
-            embedding = init_data + random_state.normal(
+            embedding = init_data + np.random.normal(
                 scale=0.001 * nndist, size=init_data.shape
             ).astype(np.float32)
         else:
             embedding = init_data
 
-    epochs_per_sample = make_epochs_per_sample(graph.data, n_epochs_max)
+    epochs_per_sample = make_epochs_per_sample(graph.data, n_epochs)
 
     head = graph.row
     tail = graph.col
     weight = graph.data
-
-    rng_state = random_state.randint(INT32_MIN, INT32_MAX, 3).astype(np.int64)
-
-    aux_data = {}
 
     embedding = (
         10.0
@@ -530,20 +454,16 @@ def simplicial_set_embedding(
         epochs_per_sample,
         a,
         b,
-        rng_state,
         gamma,
         initial_alpha,
         negative_sample_rate,
-        verbose=verbose,
         tqdm_kwds=tqdm_kwds,
         move_other=True,
     )
 
-    if isinstance(embedding, list):
-        aux_data["embedding_list"] = embedding
-        embedding = embedding[-1].copy()
+    assert not isinstance(embedding, list)
 
-    return embedding, aux_data
+    return embedding
 
 
 def find_ab_params(spread, min_dist):
@@ -581,11 +501,6 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
         result in more global views of the manifold, while smaller
         values result in more local data being preserved. In general
         values should be in the range 2 to 100.
-
-    n_components: int (optional, default 2)
-        The dimension of the space to embed into. This defaults to 2 to
-        provide easy visualization, but can reasonably be set to any
-        integer value in the range 2 to 100.
 
     n_epochs: int (optional, default None)
         The number of training epochs to be used in optimizing the
@@ -643,26 +558,14 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
         values are set automatically as determined by ``min_dist`` and
         ``spread``.
 
-    verbose: bool (optional, default False)
-        Controls verbosity of logging.
-
     tqdm_kwds: dict (optional, defaul None)
         Key word arguments to be used by the tqdm progress bar.
-
-    disconnection_distance: float (optional, default np.inf or maximal value for bounded distances)
-        Disconnect any vertices of distance greater than or equal to disconnection_distance when approximating the
-        manifold via our k-nn graph. This is particularly useful in the case that you have a bounded metric.  The
-        UMAP assumption that we have a connected manifold can be problematic when you have points that are maximally
-        different from all the rest of your data.  The connected manifold assumption will make such points have perfect
-        similarity to a random set of other points.  Too many such points will artificially connect your space.
-
     """
 
     def __init__(
         self,
         init,
         n_neighbors=15,
-        n_components=2,
         n_epochs=None,
         learning_rate=1.0,
         min_dist=0.1,
@@ -674,87 +577,47 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
         negative_sample_rate=5,
         a=None,
         b=None,
-        verbose=False,
         tqdm_kwds=None,
-        disconnection_distance=2, # MKS
     ):
+        self.init = init
         self.n_neighbors = n_neighbors
         self.n_epochs = n_epochs
-        self.init = init
-        self.n_components = n_components
-        self.repulsion_strength = repulsion_strength
         self.learning_rate = learning_rate
+        self.repulsion_strength = repulsion_strength
 
-        self.spread = spread
         self.min_dist = min_dist
+        self.spread = spread
         self.set_op_mix_ratio = set_op_mix_ratio
         self.local_connectivity = local_connectivity
         self.negative_sample_rate = negative_sample_rate
-        self.verbose = verbose
         self.tqdm_kwds = tqdm_kwds
-
-        self.disconnection_distance = disconnection_distance
 
         self.n_jobs = n_jobs
 
         self.a = a
         self.b = b
 
+        print("XX1")
+
     def _validate_parameters(self):
         if self.set_op_mix_ratio < 0.0 or self.set_op_mix_ratio > 1.0:
             raise ValueError("set_op_mix_ratio must be between 0.0 and 1.0")
-        if self.repulsion_strength < 0.0:
-            raise ValueError("repulsion_strength cannot be negative")
         if self.min_dist > self.spread:
             raise ValueError("min_dist must be less than or equal to spread")
         if self.min_dist < 0.0:
             raise ValueError("min_dist cannot be negative")
         if not isinstance(self.init, np.ndarray):
             raise ValueError("init must be a ndarray")
-        if (
-            isinstance(self.init, np.ndarray)
-            and self.init.shape[1] != self.n_components
-        ):
-            raise ValueError("init ndarray must match n_components value")
-        if self.negative_sample_rate < 0:
-            raise ValueError("negative sample rate must be positive")
         if self._initial_alpha < 0.0:
             raise ValueError("learning_rate must be positive")
         if self.n_neighbors < 2:
             raise ValueError("n_neighbors must be greater than 1")
-        if not isinstance(self.n_components, int):
-            if isinstance(self.n_components, str):
-                raise ValueError("n_components must be an int")
-            if self.n_components % 1 != 0:
-                raise ValueError("n_components must be a whole number")
-            try:
-                # this will convert other types of int (eg. numpy int64)
-                # to Python int
-                self.n_components = int(self.n_components)
-            except ValueError:
-                raise ValueError("n_components must be an int")
-        if self.n_components < 1:
-            raise ValueError("n_components must be greater than 0")
-        self.n_epochs_list = None
-        if (
-            isinstance(self.n_epochs, list)
-            or isinstance(self.n_epochs, tuple)
-            or isinstance(self.n_epochs, np.ndarray)
-        ):
-            if not issubclass(
-                np.array(self.n_epochs).dtype.type, np.integer
-            ) or not np.all(np.array(self.n_epochs) >= 0):
-                raise ValueError(
-                    "n_epochs must be a nonnegative integer "
-                    "or a list of nonnegative integers"
-                )
-            self.n_epochs_list = list(self.n_epochs)
-        elif self.n_epochs is not None and (
-            self.n_epochs < 0 or not isinstance(self.n_epochs, int)
+
+        assert self.n_epochs is not None
+        if (self.n_epochs <= 0 or not isinstance(self.n_epochs, int)
         ):
             raise ValueError(
                 "n_epochs must be a nonnegative integer "
-                "or a list of nonnegative integers"
             )
         # check sparsity of data upfront to set proper _input_distance_func &
         # save repeated checks later on
@@ -765,18 +628,6 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
 
         if self.n_jobs < -1 or self.n_jobs == 0:
             raise ValueError("n_jobs must be a postive integer, or -1 (for all cores)")
-
-        # This will be used to prune all edges of greater than a fixed value from our knn graph.
-        # We have preset defaults described in DISCONNECTION_DISTANCES for our bounded measures.
-        # Otherwise a user can pass in their own value.
-        if self.disconnection_distance is None:
-            self._disconnection_distance = np.inf
-        elif isinstance(self.disconnection_distance, int) or isinstance(
-            self.disconnection_distance, float
-        ):
-            self._disconnection_distance = self.disconnection_distance
-        else:
-            raise ValueError("disconnection_distance must either be None or a numeric.")
 
         if self.tqdm_kwds is None:
             self.tqdm_kwds = {}
@@ -793,26 +644,20 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
             bar_f = "{desc}: {percentage:3.0f}%| {bar} {n_fmt}/{total_fmt} [{elapsed}]"
             self.tqdm_kwds["bar_format"] = bar_f
 
-    def fit(self, X, ensure_all_finite=True, **kwargs):
+    def fit(self, X, **kwargs):
         """Fit X into an embedded space.
 
         Parameters
         ----------
         X : array, shape (n_samples, n_samples)
             X must be a square distance matrix
-
-        ensure_all_finite : Whether to raise an error on np.inf, np.nan, pd.NA in array.
-            The possibilities are: - True: Force all values of array to be finite.
-                                   - False: accepts np.inf, np.nan, pd.NA in array.
-                                   - 'allow-nan': accepts only np.nan and pd.NA values in array.
-                                     Values cannot be infinite.
         """
         X = check_array(
             X,
             dtype=np.float32,
             accept_sparse="csr",
             order="C",
-            ensure_all_finite=ensure_all_finite,
+            ensure_all_finite=True,
         )
         self._raw_data = X
 
@@ -828,7 +673,7 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
             self.init,
             dtype=np.float32,
             accept_sparse=False,
-            ensure_all_finite=ensure_all_finite,
+            ensure_all_finite=True,
         )
 
         self._initial_alpha = self.learning_rate
@@ -840,40 +685,20 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
             numba.set_num_threads(self.n_jobs)
 
         index = list(range(X.shape[0]))
-        inverse = list(range(X.shape[0]))
 
         # Error check n_neighbors based on data size
-        if X[index].shape[0] <= self.n_neighbors:
-            if X[index].shape[0] == 1:
-                self.embedding_ = np.zeros(
-                    (1, self.n_components)
-                )  # needed to sklearn comparability
-                return self
+        assert X[index].shape[0] > self.n_neighbors, "n_neighbors is larger than the dataset size"
+        self._n_neighbors = self.n_neighbors
 
-            warn(
-                "n_neighbors is larger than the dataset size; truncating to "
-                "X.shape[0] - 1"
-            )
-            self._n_neighbors = X[index].shape[0] - 1
-        else:
-            self._n_neighbors = self.n_neighbors
-
-        # Note: unless it causes issues for setting 'index', could move this to
-        # initial sparsity check above
-        if self._sparse_data and not X.has_sorted_indices:
+        # Note: unless it causes issues for setting 'index', could move this to initial sparsity check above
+        assert self._sparse_data
+        if not X.has_sorted_indices:
             X.sort_indices()
 
-        random_state = check_random_state(None)
-
-        if self.verbose:
-            print(ts(), "Construct fuzzy simplicial set")
-
-        assert self._sparse_data
         # For sparse precomputed distance matrices, we just argsort the rows to find
         # nearest neighbors. To make this easier, we expect matrices that are
         # symmetrical (so we can find neighbors by looking at rows in isolation,
         # rather than also having to consider that sample's column too).
-        print("Computing KNNs for sparse precomputed distances...")
         if sparse_tril(X).getnnz() != sparse_triu(X).getnnz():
             raise ValueError(
                 "Sparse precomputed distance matrices should be symmetrical!"
@@ -881,6 +706,10 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
         if not np.all(X.diagonal() == 0):
             raise ValueError("Non-zero distances from samples to themselves!")
         
+        ################################################################################
+        print("Construct fuzzy simplicial set")
+
+        print("Computing KNNs for sparse precomputed distances...")
         self._knn_indices = np.zeros((X.shape[0], self.n_neighbors), dtype=int)
         self._knn_dists = np.zeros(self._knn_indices.shape, dtype=float)
         for row_id in range(X.shape[0]):
@@ -895,19 +724,10 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
             self._knn_indices[row_id] = row_indices[row_nn_data_indices]
             self._knn_dists[row_id] = row_data[row_nn_data_indices]
 
-        
-        # Disconnect any vertices farther apart than _disconnection_distance
-        disconnected_index = self._knn_dists >= self._disconnection_distance
-        self._knn_indices[disconnected_index] = -1
-        self._knn_dists[disconnected_index] = np.inf
-        edges_removed = disconnected_index.sum()
+        # Assert no vertices farther apart than 2
+        assert (self._knn_dists <= 2).all() # MKS
 
-        (
-            self.graph_,
-            self._sigmas,
-            self._rhos,
-            self.graph_dists_,
-        ) = fuzzy_simplicial_set(
+        self.graph_ = fuzzy_simplicial_set(
             X[index],
             self.n_neighbors,
             self._knn_indices,
@@ -915,68 +735,27 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
             self.set_op_mix_ratio,
             self.local_connectivity,
             True,
-            self.verbose,
         )
         
-        # Report the number of vertices with degree 0 in our our umap.graph_
-        # This ensures that they were properly disconnected.
-        vertices_disconnected = np.sum(
-            np.array(self.graph_.sum(axis=1)).flatten() == 0
-        )
-        raise_disconnected_warning(
-            edges_removed,
-            vertices_disconnected,
-            self._disconnection_distance,
-            self._raw_data.shape[0],
-            verbose=self.verbose,
-        )
+        # Assert the number of vertices with degree 0 in our our umap.graph_
+        assert np.sum(np.array(self.graph_.sum(axis=0)).flatten() == 0) == 0
+        assert np.sum(np.array(self.graph_.sum(axis=1)).flatten() == 0) == 0
 
-        if self.verbose:
-            print(ts(), "Construct embedding")
-
-        epochs = (
-            self.n_epochs_list if self.n_epochs_list is not None else self.n_epochs
-        )
-        self.embedding_, aux_data = simplicial_set_embedding(
+        ################################################################################
+        print("Construct embedding")
+        self.embedding_ = simplicial_set_embedding(
             self.graph_,
-            self.n_components,
             self._initial_alpha,
             self._a,
             self._b,
             self.repulsion_strength,
             self.negative_sample_rate,
-            epochs,
+            self.n_epochs,
             init,
-            random_state,
-            self.verbose,
             tqdm_kwds=self.tqdm_kwds,
         )
 
-        if self.n_epochs_list is not None:
-            if "embedding_list" not in aux_data:
-                raise KeyError(
-                    "No list of embedding were found in 'aux_data'. "
-                    "It is likely the layout optimization function "
-                    "doesn't support the list of int for 'n_epochs'."
-                )
-            else:
-                self.embedding_list_ = [
-                    e[inverse] for e in aux_data["embedding_list"]
-                ]
-
-        # Assign any points that are fully disconnected from our manifold(s) to have embedding
-        # coordinates of np.nan.  These will be filtered by our plotting functions automatically.
-        # They also prevent users from being deceived a distance query to one of these points.
-        disconnected_vertices = np.array(self.graph_.sum(axis=1)).flatten() == 0
-        if len(disconnected_vertices) > 0:
-            self.embedding_[disconnected_vertices] = np.full(
-                self.n_components, np.nan
-            )
-
-        self.embedding_ = self.embedding_[inverse]
-
-        if self.verbose:
-            print(ts() + " Finished embedding")
+        print("Finished embedding")
 
         numba.set_num_threads(self._original_n_threads)
 

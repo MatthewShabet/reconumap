@@ -1,6 +1,7 @@
 import numba
 import numpy as np
 from tqdm.auto import tqdm
+from sklearn.utils import check_random_state
 
 
 @numba.njit("i4(i8[:])")
@@ -175,11 +176,9 @@ def optimize_layout_euclidean(
     epochs_per_sample,
     a,
     b,
-    rng_state,
     gamma=1.0,
     initial_alpha=1.0,
     negative_sample_rate=5.0,
-    verbose=False,
     tqdm_kwds=None,
     move_other=False,
 ):
@@ -216,16 +215,12 @@ def optimize_layout_euclidean(
         Parameter of differentiable approximation of right adjoint functor
     b: float
         Parameter of differentiable approximation of right adjoint functor
-    rng_state: array of int64, shape (3,)
-        The internal state of the rng
     gamma: float (optional, default 1.0)
         Weight to apply to negative samples.
     initial_alpha: float (optional, default 1.0)
         Initial learning rate for the SGD.
     negative_sample_rate: int (optional, default 5)
         Number of negative samples to use per positive sample.
-    verbose: bool (optional, default False)
-        Whether to report information on the current progress of the algorithm.
     tqdm_kwds: dict (optional, default None)
         Keyword arguments for tqdm progress bar.
     move_other: bool (optional, default False)
@@ -235,6 +230,11 @@ def optimize_layout_euclidean(
     embedding: array of shape (n_samples, n_components)
         The optimized embedding.
     """
+
+    assert gamma >= 0
+    assert negative_sample_rate >= 0
+    
+    print("YY1")
 
     dim = head_embedding.shape[1]
     alpha = initial_alpha
@@ -249,18 +249,17 @@ def optimize_layout_euclidean(
 
     if tqdm_kwds is None:
         tqdm_kwds = {}
-
-    epochs_list = None
-    embedding_list = []
-    if isinstance(n_epochs, list):
-        epochs_list = n_epochs
-        n_epochs = max(epochs_list)
-
-    if "disable" not in tqdm_kwds:
-        tqdm_kwds["disable"] = not verbose
-
+    tqdm_kwds["disable"] = False
+    
+    INT32_MIN = np.iinfo(np.int32).min + 1
+    INT32_MAX = np.iinfo(np.int32).max - 1
+    random_state = check_random_state(None)
+    rng_state = random_state.randint(INT32_MIN, INT32_MAX, 3).astype(np.int64)
+    
     rng_state_per_sample = np.full(
-        (head_embedding.shape[0], len(rng_state)), rng_state, dtype=np.int64
+        (head_embedding.shape[0], len(rng_state)),
+        rng_state,
+        dtype=np.int64
     ) + head_embedding[:, 0].astype(np.float64).view(np.int64).reshape(-1, 1)
 
     for n in tqdm(range(n_epochs), **tqdm_kwds):
@@ -287,14 +286,8 @@ def optimize_layout_euclidean(
 
         alpha = initial_alpha * (1.0 - (float(n) / float(n_epochs)))
 
-        if verbose and n % int(n_epochs / 10) == 0:
+        if n % int(n_epochs / 10) == 0:
             print("\tcompleted ", n, " / ", n_epochs, "epochs")
 
-        if epochs_list is not None and n in epochs_list:
-            embedding_list.append(head_embedding.copy())
 
-    # Add the last embedding to the list as well
-    if epochs_list is not None:
-        embedding_list.append(head_embedding.copy())
-
-    return head_embedding if epochs_list is None else embedding_list
+    return head_embedding
