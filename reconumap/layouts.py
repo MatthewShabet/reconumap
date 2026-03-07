@@ -231,11 +231,6 @@ def optimize_layout_euclidean(
         The optimized embedding.
     """
 
-    assert gamma >= 0
-    assert negative_sample_rate >= 0
-    
-    print("YY1")
-
     dim = head_embedding.shape[1]
     alpha = initial_alpha
 
