@@ -18,28 +18,6 @@ from .layouts import optimize_layout_euclidean
 locale.setlocale(locale.LC_NUMERIC, "C")
 
 
-def make_epochs_per_sample(weights, n_epochs):
-    """Given a set of weights and number of epochs generate the number of
-    epochs per sample for each weight.
-
-    Parameters
-    ----------
-    weights: array of shape (n_1_simplices)
-        The weights of how much we wish to sample each 1-simplex.
-
-    n_epochs: int
-        The total number of epochs we want to train for.
-
-    Returns
-    -------
-    An array of number of epochs per sample, one for each 1-simplex.
-    """
-    result = -1.0 * np.ones(weights.shape[0], dtype=np.float64)
-    n_samples = n_epochs * (weights / weights.max())
-    result[n_samples > 0] = float(n_epochs) / np.float64(n_samples[n_samples > 0])
-    return result
-
-
 def find_ab_params(spread, min_dist):
     """Fit a, b params for the differentiable curve used in lower
     dimensional fuzzy simplicial complex construction. We want the
@@ -97,20 +75,9 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
         The effective scale of embedded points. In combination with ``min_dist``
         this determines how clustered/clumped the embedded points are.
 
-    set_op_mix_ratio: float (optional, default 1.0)
-        Interpolate between (fuzzy) union and intersection as the set operation
-        used to combine local fuzzy simplicial sets to obtain a global fuzzy
-        simplicial sets. Both fuzzy set operations use the product t-norm.
-        The value of this parameter should be between 0.0 and 1.0; a value of
-        1.0 will use a pure fuzzy union, while 0.0 will use a pure fuzzy
-        intersection.
+    set_op_mix_ratio: float (optional, default 1.0) [fss]
 
-    local_connectivity: int (optional, default 1)
-        The local connectivity required -- i.e. the number of nearest
-        neighbors that should be assumed to be connected at a local level.
-        The higher this value the more connected the manifold becomes
-        locally. In practice this should be not more than the local intrinsic
-        dimension of the manifold.
+    local_connectivity: int (optional, default 1) [fss]
 
     repulsion_strength: float (optional, default 1.0)
         Weighting applied to negative samples in low dimensional embedding
@@ -190,8 +157,6 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
         if "bar_format" not in self.tqdm_kwds:
             bar_f = "{desc}: {percentage:3.0f}%| {bar} {n_fmt}/{total_fmt} [{elapsed}]"
             self.tqdm_kwds["bar_format"] = bar_f
-        
-        print("XX3")
 
 
     def fit(self, X, **kwargs):
@@ -269,10 +234,13 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
         graph = self.graph_
         graph = graph.tocoo()
         graph.sum_duplicates()
+        assert np.all(graph.data >= 0)
         graph.data[graph.data < (graph.data.max() / float(self.n_epochs))] = 0.0
         graph.eliminate_zeros()
+        assert graph.shape[0] == graph.shape[1] == init.shape[0]
 
-        epochs_per_sample = make_epochs_per_sample(graph.data, self.n_epochs)
+        # make_epochs_per_sample
+        epochs_per_sample = np.float64(graph.data.max()) / np.float64(graph.data)
         
         # How to initialize the low dimensional embedding. A numpy array of initial embedding positions.
         init = np.array(init)
@@ -299,7 +267,7 @@ class UMAP(BaseEstimator, ClassNamePrefixFeaturesOutMixin):
             b=self._b,
             gamma=self.repulsion_strength,
             initial_alpha=self.learning_rate,
-            negative_sample_rate=self.negative_sample_rate, # The number of negative samples to select per positive sample in the optimization process. Increasing this value will result in greater repulsive force being applied, greater optimization cost, but slightly more accuracy.
+            negative_sample_rate=self.negative_sample_rate,
             tqdm_kwds=self.tqdm_kwds,
             move_other=True,
         )

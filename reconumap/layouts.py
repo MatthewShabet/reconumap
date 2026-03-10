@@ -116,45 +116,34 @@ def _optimize_layout_euclidean_single_epoch(
             if dist_squared > 0.0:
                 grad_coeff = -2.0 * a * b * pow(dist_squared, b - 1.0)
                 grad_coeff /= a * pow(dist_squared, b) + 1.0
-            else:
-                grad_coeff = 0.0
-
-            for d in range(dim):
-                grad_d = clip(grad_coeff * (current[d] - other[d]))
-
-                current[d] += grad_d * alpha
-                if move_other:
-                    other[d] += -grad_d * alpha
-
+                
+                for d in range(dim):
+                    grad_d = clip(grad_coeff * (current[d] - other[d]))
+                    current[d] += grad_d * alpha
+                    if move_other:
+                        other[d] += -grad_d * alpha
+            
             epoch_of_next_sample[i] += epochs_per_sample[i]
 
+            
             n_neg_samples = int(
                 (n - epoch_of_next_negative_sample[i]) / epochs_per_negative_sample[i]
             )
 
             for p in range(n_neg_samples):
                 k = tau_rand_int(rng_state_per_sample[j]) % n_vertices
-
                 other = tail_embedding[k]
 
                 dist_squared = rdist(current, other)
-
                 if dist_squared > 0.0:
                     grad_coeff = 2.0 * gamma * b
                     grad_coeff /= (0.001 + dist_squared) * (
                         a * pow(dist_squared, b) + 1
                     )
-                elif j == k:
-                    continue
-                else:
-                    grad_coeff = 0.0
-
-                for d in range(dim):
                     if grad_coeff > 0.0:
-                        grad_d = clip(grad_coeff * (current[d] - other[d]))
-                    else:
-                        grad_d = 0
-                    current[d] += grad_d * alpha
+                        for d in range(dim):
+                            grad_d = clip(grad_coeff * (current[d] - other[d]))
+                            current[d] += grad_d * alpha
 
             epoch_of_next_negative_sample[i] += (
                 n_neg_samples * epochs_per_negative_sample[i]
@@ -230,8 +219,7 @@ def optimize_layout_euclidean(
     embedding: array of shape (n_samples, n_components)
         The optimized embedding.
     """
-
-    dim = head_embedding.shape[1]
+    
     alpha = initial_alpha
 
     epochs_per_negative_sample = epochs_per_sample / negative_sample_rate
@@ -270,7 +258,7 @@ def optimize_layout_euclidean(
             b,
             rng_state_per_sample,
             gamma,
-            dim,
+            head_embedding.shape[1], # dim
             move_other,
             alpha,
             epochs_per_negative_sample,
@@ -283,6 +271,5 @@ def optimize_layout_euclidean(
 
         if n % int(n_epochs / 10) == 0:
             print("\tcompleted ", n, " / ", n_epochs, "epochs")
-
 
     return head_embedding
